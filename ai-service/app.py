@@ -21,8 +21,11 @@ from anomaly_detection.detector import detect_anomalies
 
 app = Flask(__name__)
 
-# CRITICAL FOR WINDOWS: Point directly to the Tesseract executable you installed
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# Configure Tesseract based on the OS
+if os.name == 'nt':
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+else:
+    pytesseract.pytesseract.tesseract_cmd = 'tesseract'
 
 @app.route("/health", methods=["GET"])
 def health():

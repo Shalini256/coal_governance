@@ -1,0 +1,48 @@
+services:
+  # 1. Backend Web Service
+  - type: web
+    name: coal-governance-backend
+    env: docker
+    dockerfilePath: Dockerfile.render
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_SSLMODE
+        value: require
+      - key: JWT_SECRET
+        generateValue: true
+      - key: AI_SERVICE_URL
+        fromService:
+          type: web
+          name: coal-governance-ai
+          envVarKey: RENDER_EXTERNAL_URL
+
+  # 2. AI Service
+  - type: web
+    name: coal-governance-ai
+    env: docker
+    dockerfilePath: ./ai-service/Dockerfile
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+
+  # 3. Simulator Background Worker (Optional)
+  - type: worker
+    name: coal-governance-simulator
+    env: python
+    buildCommand: pip install -r ./simulator/requirements.txt
+    startCommand: python ./simulator/mine_data_generator.py
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_NAME
+        value: coalguard
+      - key: DB_USER
+        value: postgres
+      - key: DB_PASSWORD
+        value: postgres
+      - key: DB_HOST
+        value: postgres

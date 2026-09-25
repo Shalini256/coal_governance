@@ -1,38 +1,21 @@
 import time
 import os
 import random
-import mysql.connector
-from dotenv import load_dotenv
-
-# Search for .env files to load DB credentials
-root_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-load_dotenv(os.path.join(root_path, "backend", ".env"))
-load_dotenv(os.path.join(root_path, ".env"))
-
-DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
-DB_PORT = os.getenv("DB_PORT", "3306")
-DB_USER = os.getenv("DB_USER", "root")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-DB_NAME = os.getenv("DB_NAME", "coal_governance")
-
-MODE_FILE = os.path.join(root_path, "simulator_mode.txt")
-
-def get_current_mode():
-    if os.path.exists(MODE_FILE):
-        try:
-            with open(MODE_FILE, "r") as f:
-                return f.read().strip()
-        except:
-            pass
-    return "NORMAL_MODE"
+import psycopg2
+from psycopg2.extras import DictCursor
+from urllib.parse import urlparse
 
 def connect_db():
-    return mysql.connector.connect(
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        return psycopg2.connect(db_url)
+        
+    return psycopg2.connect(
         host=DB_HOST,
         port=DB_PORT,
         user=DB_USER,
         password=DB_PASSWORD,
-        database=DB_NAME
+        dbname=DB_NAME
     )
 
 def generate_telemetry():
@@ -51,7 +34,9 @@ def generate_telemetry():
             cursor.execute("SELECT id, mine_name, production_capacity FROM mines WHERE status='ACTIVE'")
             mines = cursor.fetchall()
             
-            for mine_id, mine_name, capacity in mines:
+            for mine_row in mines:
+                mine_id, mine_name, capacity = mine_row
+                
                 # capacity is annual, calculate expected daily production (tonnes)
                 expected_daily = float(capacity) / 365.0
                 
@@ -100,7 +85,7 @@ def generate_telemetry():
                         cursor.execute("SELECT COUNT(*) FROM incidents WHERE mine_id=1 AND status='OPEN'")
                         if cursor.fetchone()[0] == 0:
                             desc = "Slope failure detected at Pit Wall Section-B. Operations temporarily suspended for safety inspection."
-                            # Reported by রমেশ (Mine Manager = ID 2)
+                            # Reported by Ramesh (Mine Manager = ID 2)
                             cursor.execute("""
                                 INSERT INTO incidents (mine_id, incident_type, description, severity, reported_by, incident_date, status)
                                 VALUES (1, 'PIT_SLOPE_FAILURE', %s, 'CRITICAL', 2, NOW(), 'OPEN')""",
@@ -126,7 +111,7 @@ def generate_telemetry():
                             # Generate a Critical safety violation
                             cursor.execute("""
                                 INSERT INTO violations (violation_code, mine_id, category_id, description, severity, reported_by, deadline, status)
-                                VALUES ('VIO-2026-909', 1, 1, 'Critical machinery guarding missing on Crusher belt #3.', 'CRITICAL', 3, DATE_SUB(CURDATE(), INTERVAL 1 DAY), 'OPEN')""")
+                                VALUES ('VIO-2026-909', 1, 1, 'Critical machinery guarding missing on Crusher belt #3.', 'CRITICAL', 3, CURRENT_DATE - INTERVAL '1 DAY', 'OPEN')""")
                             db.commit()
                             print(f"[VIOLATION TRIGGERED] Created critical open violation for Gevra")
                 
@@ -134,26 +119,40 @@ def generate_telemetry():
                 actual_production = expected_daily * prod_factor
                 record_date = time.strftime("%Y-%m-%d")
                 
-                # Write to operational_data
-                cursor.execute("""
-                    INSERT INTO operational_data (mine_id, record_date, production_tonnes, expected_production, equipment_health_pct, attendance_pct)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE 
-                        production_tonnes = VALUES(production_tonnes),
-                        equipment_health_pct = VALUES(equipment_health_pct),
-                        attendance_pct = VALUES(attendance_pct)""",
-                    (mine_id, record_date, actual_production, expected_daily, equip_health, att_pct))
+                # Check if operational_data exists
+                cursor.execute("SELECT id FROM operational_data WHERE mine_id = %s AND record_date = %s", (mine_id, record_date))
+                row = cursor.fetchone()
+                if row:
+                    cursor.execute("""
+                        UPDATE operational_data SET 
+                            production_tonnes = %s,
+                            equipment_health_pct = %s,
+                            attendance_pct = %s
+                        WHERE id = %s
+                    """, (actual_production, equip_health, att_pct, row[0]))
+                else:
+                    cursor.execute("""
+                        INSERT INTO operational_data (mine_id, record_date, production_tonnes, expected_production, equipment_health_pct, attendance_pct)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (mine_id, record_date, actual_production, expected_daily, equip_health, att_pct))
                 
-                # Write to environmental_data
-                cursor.execute("""
-                    INSERT INTO environmental_data (mine_id, record_date, aqi, water_quality_index, noise_level_db, dust_level)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE 
-                        aqi = VALUES(aqi),
-                        water_quality_index = VALUES(water_quality_index),
-                        noise_level_db = VALUES(noise_level_db),
-                        dust_level = VALUES(dust_level)""",
-                    (mine_id, record_date, aqi, wqi, noise, dust))
+                # Check if environmental_data exists
+                cursor.execute("SELECT id FROM environmental_data WHERE mine_id = %s AND record_date = %s", (mine_id, record_date))
+                row = cursor.fetchone()
+                if row:
+                    cursor.execute("""
+                        UPDATE environmental_data SET 
+                            aqi = %s,
+                            water_quality_index = %s,
+                            noise_level_db = %s,
+                            dust_level = %s
+                        WHERE id = %s
+                    """, (aqi, wqi, noise, dust, row[0]))
+                else:
+                    cursor.execute("""
+                        INSERT INTO environmental_data (mine_id, record_date, aqi, water_quality_index, noise_level_db, dust_level)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (mine_id, record_date, aqi, wqi, noise, dust))
                 
             db.commit()
             cursor.close()

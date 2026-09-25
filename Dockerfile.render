@@ -1,0 +1,25 @@
+# ---- Build stage ----
+FROM golang:1.22-alpine AS builder
+WORKDIR /app/backend
+# Copy the go.mod and go.sum (if it exists)
+COPY backend/go.mod ./
+COPY backend/go.sum* ./
+RUN go mod download || true
+
+# Copy the rest of the backend source code
+COPY backend/ .
+RUN go mod tidy && CGO_ENABLED=0 GOOS=linux go build -o coal-governance-backend .
+
+# ---- Runtime stage ----
+FROM alpine:3.19
+WORKDIR /app/backend
+RUN mkdir -p /app/backend/uploads
+
+# Copy the built backend binary
+COPY --from=builder /app/backend/coal-governance-backend .
+
+# Copy the frontend static files so the backend can serve them via `../frontend`
+COPY frontend/ /app/frontend/
+
+EXPOSE 8080
+CMD ["./coal-governance-backend"]

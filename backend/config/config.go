@@ -42,7 +42,8 @@ func Load() *Config {
 	dbSSLMode := getEnv("DB_SSLMODE", "disable")
 
 	cfg := &Config{
-		AppPort: getEnv("APP_PORT", "8080"),
+		AppPort: getEnv("PORT",
+			getEnv("APP_PORT", "8080")),
 		DatabaseURL: fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
 			url.QueryEscape(dbUser),
 			url.QueryEscape(dbPass),
